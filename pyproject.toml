@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "spacecraft-rendezvous-rl"
 version = "1.0.0"
-description = "Tabular SARSA for safe and fuel-efficient planar spacecraft rendezvous"
+description = "SARSA and actor-critic RL for safe and fuel-efficient planar spacecraft rendezvous"
 requires-python = ">=3.10"
 dependencies = ["numpy>=1.24,<3", "matplotlib>=3.7,<4"]
 
@@ -15,4 +15,3 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-

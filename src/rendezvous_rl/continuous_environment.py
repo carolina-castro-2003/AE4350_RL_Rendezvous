@@ -1,38 +1,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import IntEnum
 
 import numpy as np
 from numpy.typing import NDArray
 
 from .config import Config
-
-State = NDArray[np.float64]
-
-
-class Action(IntEnum):
-    COAST = 0
-    PLUS_X = 1
-    MINUS_X = 2
-    PLUS_Y = 3
-    MINUS_Y = 4
+from .environment import State
 
 
-ACTION_DIRECTIONS = np.array(
-    [
-        [0.0, 0.0],
-        [1.0, 0.0],
-        [-1.0, 0.0],
-        [0.0, 1.0],
-        [0.0, -1.0],
-    ],
-    dtype=float,
-)
+ContinuousAction = NDArray[np.float64]
 
 
 @dataclass(frozen=True)
-class StepInfo:
+class ContinuousStepInfo:
+    """Diagnostics returned by the continuous-thrust rendezvous environment."""
+
     success: bool
     collision: bool
     escaped: bool
@@ -40,19 +23,25 @@ class StepInfo:
     unsafe_entry: bool
     distance: float
     speed: float
-    fuel: int
+    fuel: float
+    thrust_norm: float
 
 
-class RendezvousEnv:
-    """Planar target-centred Clohessy-Wiltshire/Hill dynamics.
+class ContinuousRendezvousEnv:
+    """Planar Hill-frame rendezvous environment with continuous thrust.
 
-    State = [x, y, vx, vy].
+    This environment uses the same state, terminal conditions, and reward
+    interpretation as the tabular SARSA version, but the control input is now a
+    two-dimensional continuous acceleration command:
 
-    The model is deliberately simplified for an educational reinforcement
-    learning experiment. It is not intended to be a flight-certified simulator.
+        action = [u_x, u_y],     ||action||_inf <= thrust_acceleration.
+
+    That makes it suitable for an actor-critic controller: the actor represents
+    a parameterised stochastic policy over continuous thrust vectors, and the
+    critic estimates V(s) for TD learning.
     """
 
-    n_actions = len(Action)
+    action_dim = 2
 
     def __init__(self, config: Config, seed: int | None = None) -> None:
         self.config = config
@@ -61,66 +50,61 @@ class RendezvousEnv:
         self.steps = 0
 
     def reset(self, state: State | None = None) -> State:
-        """Reset the environment and return the initial state."""
-
         if state is None:
             angle = self.rng.uniform(0.0, 2.0 * np.pi)
             radius = self.rng.uniform(
                 self.config.initial_radius_min,
                 self.config.initial_radius_max,
             )
-
             position = radius * np.array([np.cos(angle), np.sin(angle)])
             velocity = self.rng.uniform(
                 -self.config.initial_speed,
                 self.config.initial_speed,
                 size=2,
             )
-
             self.state = np.concatenate((position, velocity))
-
         else:
             self.state = np.asarray(state, dtype=np.float64).copy()
-
             if self.state.shape != (4,):
                 raise ValueError("Initial state must have shape (4,).")
-
         self.steps = 0
         return self.state.copy()
 
-    def step(self, action: int) -> tuple[State, float, bool, StepInfo]:
-        """Advance the environment by one time step."""
-
-        if action not in range(self.n_actions):
-            raise ValueError(f"Action must be in [0, {self.n_actions - 1}].")
-
+    def step(
+        self,
+        action: ContinuousAction,
+    ) -> tuple[State, float, bool, ContinuousStepInfo]:
         cfg = self.config
+        action_array = np.asarray(action, dtype=np.float64)
+        if action_array.shape != (2,):
+            raise ValueError("Continuous action must have shape (2,).")
+
+        thrust = np.clip(
+            action_array,
+            -cfg.thrust_acceleration,
+            cfg.thrust_acceleration,
+        )
+        thrust_norm = float(np.linalg.norm(thrust))
+        fuel = thrust_norm / (np.sqrt(2.0) * cfg.thrust_acceleration)
 
         x, y, vx, vy = self.state
-
-        thrust = cfg.thrust_acceleration * ACTION_DIRECTIONS[action]
         n = cfg.mean_motion
 
-        # Simplified planar Hill/Clohessy-Wiltshire equations:
-        # xddot = 3 n^2 x + 2 n ydot + ux
-        # yddot = -2 n xdot + uy
         acceleration = np.array(
             [
                 3.0 * n * n * x + 2.0 * n * vy + thrust[0],
                 -2.0 * n * vx + thrust[1],
-            ]
+            ],
+            dtype=np.float64,
         )
 
-        # Semi-implicit Euler integration:
-        # first update velocity, then position.
-        velocity = np.array([vx, vy]) + cfg.dt * acceleration
-        position = np.array([x, y]) + cfg.dt * velocity
+        velocity = np.array([vx, vy], dtype=np.float64) + cfg.dt * acceleration
+        position = np.array([x, y], dtype=np.float64) + cfg.dt * velocity
         next_state = np.concatenate((position, velocity))
 
         old_distance = float(np.hypot(x, y))
         distance = float(np.linalg.norm(position))
         speed = float(np.linalg.norm(velocity))
-        fuel = int(action != Action.COAST)
 
         entered_keep_out = old_distance >= cfg.keep_out_radius > distance
         unsafe = distance < cfg.keep_out_radius and speed > cfg.safe_entry_speed
@@ -143,7 +127,6 @@ class RendezvousEnv:
 
         if unsafe:
             reward -= cfg.safety_penalty
-
         if success:
             reward += cfg.success_reward
         elif collision:
@@ -154,8 +137,7 @@ class RendezvousEnv:
             reward -= cfg.timeout_penalty
 
         done = success or collision or escaped or time_limit
-
-        info = StepInfo(
+        info = ContinuousStepInfo(
             success=success,
             collision=collision,
             escaped=escaped,
@@ -163,9 +145,7 @@ class RendezvousEnv:
             unsafe_entry=entered_keep_out and unsafe,
             distance=distance,
             speed=speed,
-            fuel=fuel,
+            fuel=float(fuel),
+            thrust_norm=thrust_norm,
         )
-
         return next_state.copy(), float(reward), done, info
-
-        

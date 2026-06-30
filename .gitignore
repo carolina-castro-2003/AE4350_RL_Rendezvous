@@ -1,0 +1,17 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.env
+
+src/*.egg-info/
+*.egg-info/
+
+.pytest_cache/
+.mypy_cache/
+
+# optional: keep result plots/csv/json, but ignore huge learned tables if needed
+# results/*.npz

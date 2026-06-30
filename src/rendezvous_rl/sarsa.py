@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from .environment import ACTION_DIRECTIONS
 from pathlib import Path
 
 import numpy as np
@@ -17,7 +17,7 @@ class SarsaAgent:
         self.discretizer = StateDiscretizer(config)
         self.rng = np.random.default_rng(config.seed if seed is None else seed)
         self.q: NDArray[np.float32] = np.zeros(
-            (self.discretizer.n_states, 5), dtype=np.float32
+            (self.discretizer.n_states, ACTION_DIRECTIONS.shape[0]), dtype=np.float32
         )
 
     def choose_action(self, state_index: int, epsilon: float) -> int:
