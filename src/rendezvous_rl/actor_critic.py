@@ -18,19 +18,26 @@ ContinuousAction = NDArray[np.float64]
 class ActorCriticConfig:
     """Learning parameters for the continuous actor-critic controller."""
 
-    actor_alpha: float = 0.010
-    critic_alpha: float = 0.060
+    actor_alpha: float = 0.0020
+    critic_alpha: float = 0.020
     gamma: float = 0.995
     entropy_beta: float = 0.0005
-    prior_beta: float = 0.0015
-    validation_interval: int = 250
-    validation_episodes: int = 40
-    sigma_start: float = 0.85
-    sigma_end: float = 0.08
-    sigma_decay: float = 0.9994
+    prior_beta: float = 0.0
+    validation_interval: int = 100
+    validation_episodes: int = 30
+    validation_start_episode: int = 500
+    early_stop_patience: int = 4
+    validation_min_delta: float = 1e-6
+    rollback_on_validation_failure: bool = True
+    sigma_start: float = 0.45
+    sigma_end: float = 0.04
+    sigma_decay: float = 0.9995
     eligibility_lambda: float = 0.0
     max_grad_norm: float = 8.0
-    warm_start_scale: float = 1.0
+    warm_start_scale: float = 0.0
+    init_noise_std: float = 0.020
+    td_error_scale: float = 100.0
+    max_critic_weight_norm: float = 500.0
     position_scale: float = 35.0
     velocity_scale: float = 0.08
 
@@ -119,7 +126,11 @@ class LinearGaussianActorCritic:
         self.critic_weights = np.zeros(n_features, dtype=np.float64)
         self.critic_trace = np.zeros(n_features, dtype=np.float64)
         self._initialise_guidance_prior()
+        self.actor_weights += (
+            self.ac_config.init_noise_std * self.rng.standard_normal(self.actor_weights.shape)
+        )
         self.prior_actor_weights = self.actor_weights.copy()
+        self.initial_actor_weights = self.actor_weights.copy()
 
     def _initialise_guidance_prior(self) -> None:
         """Initialise the actor with a weak proportional-derivative prior.
@@ -181,6 +192,11 @@ class LinearGaussianActorCritic:
         current_value = float(self.critic_weights @ phi)
         next_value = 0.0 if done else self.value(next_state)
         delta = reward + self.ac_config.gamma * next_value - current_value
+        scaled_delta = float(np.clip(
+            delta / max(self.ac_config.td_error_scale, 1e-9),
+            -5.0,
+            5.0,
+        ))
 
         if self.ac_config.eligibility_lambda > 0.0:
             self.critic_trace = (
@@ -190,14 +206,17 @@ class LinearGaussianActorCritic:
             critic_direction = self.critic_trace
         else:
             critic_direction = phi
-        self.critic_weights += self.ac_config.critic_alpha * delta * critic_direction
+        self.critic_weights += self.ac_config.critic_alpha * scaled_delta * critic_direction
+        critic_norm = float(np.linalg.norm(self.critic_weights))
+        if critic_norm > self.ac_config.max_critic_weight_norm:
+            self.critic_weights *= self.ac_config.max_critic_weight_norm / critic_norm
 
         sigma2 = max(sample.sigma * sample.sigma, 1e-8)
         score = ((sample.raw_action - sample.mean_raw) / sigma2)[:, None] * phi[None, :]
         entropy_push = -sample.mean_raw[:, None] * phi[None, :]
         prior_pull = self.prior_actor_weights - self.actor_weights
         actor_grad = (
-            delta * score
+            scaled_delta * score
             + self.ac_config.entropy_beta * entropy_push
             + self.ac_config.prior_beta * prior_pull
         )
@@ -214,6 +233,7 @@ class LinearGaussianActorCritic:
             path,
             actor_weights=self.actor_weights,
             critic_weights=self.critic_weights,
+            initial_actor_weights=self.initial_actor_weights,
             config=self.config.as_dict(),
             actor_critic_config=self.ac_config.as_dict(),
         )

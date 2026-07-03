@@ -21,28 +21,41 @@ def plot_actor_critic_learning(
         ("returns", "Episode return"),
         ("successes", "Success rate (%)"),
         ("fuel", "Normalised impulse"),
-        ("sigma", "Exploration std"),
+        ("actor_weight_change", "Actor weight change"),
     ]
     fig, axes = plt.subplots(2, 2, figsize=(11, 7), constrained_layout=True)
     for axis, (field, label) in zip(axes.flat, fields):
-        curves = np.array(
-            [
-                moving_average(
-                    np.asarray(getattr(history, field), dtype=float),
-                    config.smoothing_window,
-                )
-                for history in histories
-            ],
-            dtype=np.float64,
-        )
+        smoothed_curves = [
+            moving_average(
+                np.asarray(getattr(history, field), dtype=float),
+                config.smoothing_window,
+            )
+            for history in histories
+        ]
+        max_length = max(curve.size for curve in smoothed_curves)
+        curves = np.full((len(smoothed_curves), max_length), np.nan, dtype=np.float64)
+        for row, curve in enumerate(smoothed_curves):
+            curves[row, : curve.size] = curve
         if field == "successes":
             curves *= 100.0
-        x = np.arange(curves.shape[1]) + config.smoothing_window
-        mean, std = curves.mean(axis=0), curves.std(axis=0)
+        x = np.arange(max_length) + config.smoothing_window
+        mean = np.nanmean(curves, axis=0)
+        counts = np.sum(~np.isnan(curves), axis=0)
+        std = np.nanstd(curves, axis=0)
         axis.plot(x, mean, lw=1.8)
         axis.fill_between(x, mean - std, mean + std, alpha=0.25, label="±1 SD")
         axis.set(xlabel="Training episode", ylabel=label)
         axis.grid(alpha=0.3)
+        if np.any(counts < len(histories)):
+            first_partial = int(np.argmax(counts < len(histories)))
+            axis.axvline(
+                x[first_partial],
+                color="0.4",
+                ls="--",
+                lw=1.0,
+                alpha=0.6,
+                label="some seeds stopped",
+            )
         if len(histories) > 1:
             axis.legend()
     fig.suptitle(f"Continuous actor-critic learning curves ({len(histories)} seeds)")

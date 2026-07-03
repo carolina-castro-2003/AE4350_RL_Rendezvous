@@ -1,0 +1,3 @@
+parameter,value,seed,source,success_rate,collision_rate,escape_rate,mean_final_distance,mean_final_speed,mean_fuel,mean_safety_violations,mean_return,delta_success_rate,delta_mean_return
+baseline,baseline,101,trained,1.0,0.0,0.0,1.3676994152374113,0.02847808365997474,3.708880805167334,0.0,327.9982815448194,0.0,0.0
+baseline,baseline,202,trained,0.875,0.125,0.0,1.2031719612377119,0.030400501428018988,3.827515052352909,0.0,197.42942330143455,0.0,0.0

@@ -12,7 +12,7 @@ from .ac_plotting import (
     plot_actor_critic_trajectory,
 )
 from .ac_training import train_actor_critic
-from .actor_critic import ActorCriticConfig
+from .actor_critic import ActorCriticConfig, LinearGaussianActorCritic
 from .config import Config
 from .io_utils import write_json, write_rows
 
@@ -24,8 +24,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--episodes", type=int, default=8_000)
     parser.add_argument("--evaluation-episodes", type=int, default=250)
     parser.add_argument("--seeds", type=int, nargs="+", default=[7, 17, 27])
-    parser.add_argument("--actor-alpha", type=float, default=0.010)
-    parser.add_argument("--critic-alpha", type=float, default=0.060)
+    parser.add_argument("--actor-alpha", type=float, default=0.0020)
+    parser.add_argument("--critic-alpha", type=float, default=0.020)
     parser.add_argument("--quick", action="store_true", help="Fast code check; not report-quality data.")
     return parser.parse_args()
 
@@ -40,6 +40,9 @@ def main() -> None:
         episodes=episodes,
         evaluation_episodes=evaluation_episodes,
         results_dir="results_actor_critic",
+        safety_penalty=40.0,
+        collision_penalty=800.0,
+        speed_weight=4.0,
     )
     ac_config = ActorCriticConfig(
         actor_alpha=args.actor_alpha,
@@ -55,20 +58,41 @@ def main() -> None:
     agents = []
     all_trials = []
     summary_rows: list[dict[str, float | int]] = []
+    prior_rows: list[dict[str, float | int]] = []
 
     for seed in seeds:
         print(f"\n=== actor-critic independent training seed {seed} ===")
         config = base.changed(seed=seed)
+        initial_agent = LinearGaussianActorCritic(config, ac_config, seed=config.seed + 11)
+        prior_metrics, _prior_trials = evaluate_actor_critic(initial_agent, config)
+        prior_row: dict[str, float | int] = {"seed": seed, **prior_metrics.as_dict()}
+        prior_rows.append(prior_row)
+
         agent, history = train_actor_critic(config, ac_config)
         metrics, trials = evaluate_actor_critic(agent, config)
-        row: dict[str, float | int] = {"seed": seed, **metrics.as_dict()}
+        actor_weight_change = float(np.linalg.norm(agent.actor_weights - agent.initial_actor_weights))
+        critic_weight_norm = float(np.linalg.norm(agent.critic_weights))
+        row: dict[str, float | int] = {
+            "seed": seed,
+            **metrics.as_dict(),
+            "prior_success_rate": prior_metrics.success_rate,
+            "prior_mean_return": prior_metrics.mean_return,
+            "actor_weight_change": actor_weight_change,
+            "critic_weight_norm": critic_weight_norm,
+        }
         summary_rows.append(row)
         histories.append(history)
         agents.append(agent)
         all_trials.append(trials)
         agent.save(output / f"actor_critic_seed_{seed}.npz")
-        print(row)
+        display_row = {
+            key: value
+            for key, value in row.items()
+            if key not in {"prior_success_rate", "prior_mean_return"}
+        }
+        print(display_row)
 
+    write_rows(output / "prior_evaluation_by_seed.csv", prior_rows)
     write_rows(output / "evaluation_by_seed.csv", summary_rows)
     numeric_keys = [f.name for f in fields(type(metrics))]
     aggregate = {
