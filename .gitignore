@@ -15,3 +15,4 @@ src/*.egg-info/
 
 # optional: keep result plots/csv/json, but ignore huge learned tables if needed
 # results/*.npz
+.DS_Store
