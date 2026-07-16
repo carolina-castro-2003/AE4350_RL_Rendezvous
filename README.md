@@ -5,7 +5,7 @@ A complete Python repository for two reinforcement-learning controllers in a sim
 - a continuous-thrust actor-critic controller with a stochastic Gaussian policy and a learned value critic.
 
 
-The lecture distinguishes discrete RL from continuous RL with function approximators. This project now includes both routes, which gives you a stronger comparison section.
+The lecture distinguishes discrete RL from continuous RL with function approximators. This project includes both a discrete tabular method and a continuous-control method with function approximation, allowing the two approaches to be compared directly.
 
 The SARSA part follows the discrete route:
 - Agent state: discretised relative position and velocity `[x, y, vx, vy]`.
